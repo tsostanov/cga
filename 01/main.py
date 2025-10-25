@@ -51,31 +51,66 @@ class ImageStats:
     hist_b: np.ndarray
 
 
+# class HistogramDialog(QDialog):
+#     """Модальный диалог с гистограммами RGB (0..255)."""
+
+#     def __init__(self, stats: ImageStats, parent: QWidget | None = None):
+#         super().__init__(parent)
+#         self.setWindowTitle("Гистограмма RGB")
+#         self.setModal(True)
+#         self.setAttribute(Qt.WA_DeleteOnClose, True)
+#         self.resize(900, 550)
+
+#         fig = Figure(figsize=(9, 5), tight_layout=True)
+#         canvas = FigureCanvas(fig)
+#         ax = fig.add_subplot(111)
+
+#         x = np.arange(256)
+#         ax.bar(x - 0.3, stats.hist_r, width=0.3, label="R", color="red", alpha=0.6)
+#         ax.bar(x,         stats.hist_g, width=0.3, label="G", color="green", alpha=0.6)
+#         ax.bar(x + 0.3,   stats.hist_b, width=0.3, label="B", color="blue", alpha=0.6)
+
+#         ax.set_title("Гистограммы интенсивностей (0..255)")
+#         ax.set_xlabel("Интенсивность")
+#         ax.set_ylabel("Число пикселей")
+#         ax.set_xlim(0, 255)
+#         ax.legend()
+#         ax.grid(True, linestyle=":", linewidth=0.5, alpha=0.5)
+
+#         buttons = QDialogButtonBox(QDialogButtonBox.Close)
+#         buttons.rejected.connect(self.reject)
+
+#         lay = QVBoxLayout(self)
+#         lay.addWidget(canvas)
+#         lay.addWidget(buttons)
+
+
 class HistogramDialog(QDialog):
-    """Модальный диалог с гистограммами RGB (0..255)."""
+    """Модальный диалог: три столбца — ΣR, ΣG, ΣB по изображению."""
 
     def __init__(self, stats: ImageStats, parent: QWidget | None = None):
         super().__init__(parent)
-        self.setWindowTitle("Гистограмма RGB")
+        self.setWindowTitle("Диаграмма каналов (ΣR, ΣG, ΣB)")
         self.setModal(True)
         self.setAttribute(Qt.WA_DeleteOnClose, True)
-        self.resize(900, 550)
+        self.resize(700, 450)
 
-        fig = Figure(figsize=(9, 5), tight_layout=True)
+        fig = Figure(figsize=(7, 4), tight_layout=True)
         canvas = FigureCanvas(fig)
         ax = fig.add_subplot(111)
 
-        x = np.arange(256)
-        ax.bar(x - 0.3, stats.hist_r, width=0.3, label="R", color="red", alpha=0.6)
-        ax.bar(x,         stats.hist_g, width=0.3, label="G", color="green", alpha=0.6)
-        ax.bar(x + 0.3,   stats.hist_b, width=0.3, label="B", color="blue", alpha=0.6)
+        values = np.array([stats.sum_r, stats.sum_g, stats.sum_b], dtype=np.float64)
+        labels = ["R", "G", "B"]
+        colors = ["red", "green", "blue"]
 
-        ax.set_title("Гистограммы интенсивностей (0..255)")
-        ax.set_xlabel("Интенсивность")
-        ax.set_ylabel("Число пикселей")
-        ax.set_xlim(0, 255)
-        ax.legend()
-        ax.grid(True, linestyle=":", linewidth=0.5, alpha=0.5)
+        _bars = ax.bar(range(3), values, color=colors, alpha=0.8, width=0.6)
+        ax.set_xticks(range(3), labels)
+        ax.set_ylabel("Сумма значений канала")
+        ax.set_title("Вклад каналов: ΣR, ΣG, ΣB")
+        ax.grid(True, axis="y", linestyle=":", linewidth=0.6, alpha=0.6)
+
+        for i, v in enumerate(values):
+            ax.text(i, v, f"{int(v):,}".replace(",", " "), ha="center", va="bottom", fontsize=10)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Close)
         buttons.rejected.connect(self.reject)
