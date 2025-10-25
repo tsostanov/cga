@@ -86,7 +86,7 @@ class ImageStats:
 
 
 class HistogramDialog(QDialog):
-    """Модальный диалог: три столбца — ΣR, ΣG, ΣB по изображению."""
+    """Три столбца — ΣR, ΣG, ΣB по изображению."""
 
     def __init__(self, stats: ImageStats, parent: QWidget | None = None):
         super().__init__(parent)
@@ -174,7 +174,7 @@ class MainWindow(QMainWindow):
         root_layout.addWidget(self.stats_group)
         self.setCentralWidget(root)
 
-    # ===== Логика =====
+    # Вычисления
     def load_image(self, path: Path) -> None:
         if not path.exists():
             QMessageBox.warning(
