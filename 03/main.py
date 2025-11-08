@@ -68,15 +68,32 @@ def show_image(img_array, x_vals, y_vals, circle_cx, circle_cy, circle_r):
     plt.show()
 
 
-def show_section(E_masked, x_vals, y_vals, center_y):
+def show_section_horizontal(E_masked, x_vals, y_vals, center_y):
+    # ближайшая строка к заданному y
     row_idx = (np.abs(y_vals - center_y)).argmin()
     section_x = x_vals
     section_E = E_masked[row_idx, :]
 
     plt.figure()
     plt.plot(section_x, section_E)
-    plt.title("Сечение через центр")
+    plt.title("Горизонтальное сечение через центр")
     plt.xlabel("x, мм")
+    plt.ylabel("E")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+
+def show_section_vertical(E_masked, x_vals, y_vals, center_x):
+    # ближайший столбец к заданному x
+    col_idx = (np.abs(x_vals - center_x)).argmin()
+    section_y = y_vals
+    section_E = E_masked[:, col_idx]
+
+    plt.figure()
+    plt.plot(section_y, section_E)
+    plt.title("Вертикальное сечение через центр")
+    plt.xlabel("y, мм")
     plt.ylabel("E")
     plt.grid(True)
     plt.tight_layout()
@@ -126,7 +143,7 @@ def main():
 
     add_field(0, "W_mm", 1000)
     add_field(1, "H_mm", 1000)
-    add_field(2, "W_res", 400)
+    add_field(2, "W_res", 400)   # обновим автоматически
     add_field(3, "H_res", 400)
     add_field(4, "x_L", 0.0)
     add_field(5, "y_L", 0.0)
@@ -148,12 +165,20 @@ def main():
 
     ttk.Button(root, text="...", command=browse_file).grid(row=11, column=2, padx=5, pady=2)
 
+    status_var = tk.StringVar(value="")
+    status_label = tk.Label(root, textvariable=status_var, anchor="w", fg="gray")
+    status_label.grid(row=13, column=0, columnspan=3, sticky="we", padx=5, pady=2)
+
     def run_calculation():
         try:
             W_mm_v = float(entries["W_mm"].get())
             H_mm_v = float(entries["H_mm"].get())
-            W_res_v = int(entries["W_res"].get())
             H_res_v = int(entries["H_res"].get())
+
+            W_res_v = int(round(H_res_v * W_mm_v / H_mm_v))
+            entries["W_res"].set(str(W_res_v))
+            status_var.set(f"Ширина в пикселях изменена на {W_res_v} для квадратных пикселей.")
+
             x_L_v = float(entries["x_L"].get())
             y_L_v = float(entries["y_L"].get())
             z_L_v = float(entries["z_L"].get())
@@ -194,7 +219,8 @@ def main():
         )
 
         show_image(E_img, x_vals, y_vals, circle_cx_v, circle_cy_v, circle_r_v)
-        show_section(E_raw * mask_circle, x_vals, y_vals, circle_cy_v)
+        show_section_horizontal(E_raw * mask_circle, x_vals, y_vals, circle_cy_v)
+        show_section_vertical(E_raw * mask_circle, x_vals, y_vals, circle_cx_v)
 
         messagebox.showinfo("Готово", f"Сохранено: {output_path.get()}")
 
