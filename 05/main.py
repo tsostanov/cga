@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk ,messagebox ,filedialog 
 from dataclasses import dataclass 
 from typing import List ,Tuple 
+from pathlib import Path
 import numpy as np 
 from PIL import Image 
 import matplotlib .pyplot as plt 
@@ -59,6 +60,10 @@ class TwoSpheresRenderer :
         self .rgb_img =None 
         self .x_vals =None 
         self .y_vals =None 
+        self.view_axis = "z"
+        self.axis_labels = ("X", "Y")
+        self.view_title = "Render"
+
 
     @staticmethod 
     def _normalize (vx ,vy ,vz ,eps =1e-10 ):
@@ -92,256 +97,241 @@ class TwoSpheresRenderer :
 
         return t ,hit 
 
-    def compute (self ):
-        W =self .screen .W_mm 
-        H =self .screen .H_mm 
-        Wres =self .screen .W_res 
-        Hres =self .screen .H_res 
 
+    def compute(self, view_axis="z"):
+        view_axis = view_axis.lower()
+        if view_axis not in ("z", "x", "y"):
+            raise ValueError("view_axis must be one of 'x', 'y', 'z'")
+        self.view_axis = view_axis
 
-        xs =np .linspace (-W /2 ,W /2 ,Wres )
-        ys =np .linspace (-H /2 ,H /2 ,Hres )
-        Xs ,Ys =np .meshgrid (xs ,ys )
+        W = self.screen.W_mm
+        H = self.screen.H_mm
+        Wres = self.screen.W_res
+        Hres = self.screen.H_res
 
-        self .x_vals =xs 
-        self .y_vals =ys 
+        xs = np.linspace(-W / 2, W / 2, Wres)
+        ys = np.linspace(-H / 2, H / 2, Hres)
+        Xs, Ys = np.meshgrid(xs, ys)
 
+        self.x_vals = xs
+        self.y_vals = ys
 
-        Ox ,Oy ,Oz =0.0 ,0.0 ,self .viewer .z 
+        dist = self.viewer.z
+        if view_axis == "z":
+            Ox, Oy, Oz = 0.0, 0.0, dist
+            plane_x, plane_y, plane_z = Xs, Ys, np.zeros_like(Xs)
+            self.axis_labels = ("X", "Y")
+            self.view_title = "Front view (-Z)"
+        elif view_axis == "x":
+            Ox, Oy, Oz = dist, 0.0, 0.0
+            plane_x, plane_y, plane_z = np.zeros_like(Xs), Xs, Ys
+            self.axis_labels = ("Y", "Z")
+            self.view_title = "Side view (-X)"
+        else:
+            Ox, Oy, Oz = 0.0, dist, 0.0
+            plane_x, plane_y, plane_z = Xs, np.zeros_like(Xs), Ys
+            self.axis_labels = ("X", "Z")
+            self.view_title = "Top view (-Y)"
 
+        Dx = plane_x - Ox
+        Dy = plane_y - Oy
+        Dz = plane_z - Oz
+        Dx, Dy, Dz = self._normalize(Dx, Dy, Dz)
 
-        Dx =Xs -Ox 
-        Dy =Ys -Oy 
-        Dz =-Oz *np .ones_like (Xs )
-        Dx ,Dy ,Dz =self ._normalize (Dx ,Dy ,Dz )
+        t_hit = np.full_like(Xs, np.inf, dtype=float)
+        sphere_id = np.full_like(Xs, -1, dtype=int)
+        hit_mask = np.zeros_like(Xs, dtype=bool)
 
-
-        t_hit =np .full_like (Xs ,np .inf ,dtype =float )
-        sphere_id =np .full_like (Xs ,-1 ,dtype =int )
-        hit_mask =np .zeros_like (Xs ,dtype =bool )
-
-
-        for idx ,sphere in enumerate (self .spheres ):
-            t ,hit =self ._ray_sphere_intersection (
-            Ox ,Oy ,Oz ,Dx ,Dy ,Dz ,
-            sphere .cx ,sphere .cy ,sphere .cz ,sphere .radius 
+        for idx, sphere in enumerate(self.spheres):
+            t, hit = self._ray_sphere_intersection(
+                Ox, Oy, Oz, Dx, Dy, Dz,
+                sphere.cx, sphere.cy, sphere.cz, sphere.radius
             )
+            mask = hit & (t < t_hit)
+            t_hit[mask] = t[mask]
+            sphere_id[mask] = idx
+            hit_mask = hit_mask | mask
 
+        if not np.any(hit_mask):
+            self.rgb_img = np.zeros((Hres, Wres, 3), dtype=np.uint8)
+            return self.rgb_img
 
-            mask =hit &(t <t_hit )
-            t_hit [mask ]=t [mask ]
-            sphere_id [mask ]=idx 
-            hit_mask =hit_mask |mask 
+        Px = Ox + Dx * t_hit
+        Py = Oy + Dy * t_hit
+        Pz = Oz + Dz * t_hit
 
+        Nx = np.zeros_like(Px)
+        Ny = np.zeros_like(Py)
+        Nz = np.zeros_like(Pz)
 
-        if not np .any (hit_mask ):
-            self .rgb_img =np .zeros ((Hres ,Wres ,3 ),dtype =np .uint8 )
-            return self .rgb_img 
+        for idx, sphere in enumerate(self.spheres):
+            mask = (sphere_id == idx) & hit_mask
+            if np.any(mask):
+                Nx[mask] = (Px[mask] - sphere.cx) / sphere.radius
+                Ny[mask] = (Py[mask] - sphere.cy) / sphere.radius
+                Nz[mask] = (Pz[mask] - sphere.cz) / sphere.radius
 
+        Nx, Ny, Nz = self._normalize(Nx, Ny, Nz)
 
-        Px =Ox +Dx *t_hit 
-        Py =Oy +Dy *t_hit 
-        Pz =Oz +Dz *t_hit 
+        Vx = Ox - Px
+        Vy = Oy - Py
+        Vz = Oz - Pz
+        Vx, Vy, Vz = self._normalize(Vx, Vy, Vz)
 
+        R_img = np.zeros_like(Px, dtype=float)
+        G_img = np.zeros_like(Px, dtype=float)
+        B_img = np.zeros_like(Px, dtype=float)
 
-        Nx =np .zeros_like (Px )
-        Ny =np .zeros_like (Py )
-        Nz =np .zeros_like (Pz )
+        Ia = float(self.shading.I_ambient)
+        ka = float(self.shading.k_a)
+        kd = float(self.shading.k_d)
+        ks = float(self.shading.k_s)
+        n = float(self.shading.shininess)
 
-        for idx ,sphere in enumerate (self .spheres ):
-            mask =(sphere_id ==idx )&hit_mask 
-            if np .any (mask ):
-                Nx [mask ]=(Px [mask ]-sphere .cx )/sphere .radius 
-                Ny [mask ]=(Py [mask ]-sphere .cy )/sphere .radius 
-                Nz [mask ]=(Pz [mask ]-sphere .cz )/sphere .radius 
+        for idx, sphere in enumerate(self.spheres):
+            mask = sphere_id == idx
+            if np.any(mask):
+                sr, sg, sb = sphere.color
+                R_img[mask] += ka * Ia * sr
+                G_img[mask] += ka * Ia * sg
+                B_img[mask] += ka * Ia * sb
 
-        Nx ,Ny ,Nz =self ._normalize (Nx ,Ny ,Nz )
+        for light in self.lights:
+            Lx, Ly, Lz = light.x, light.y, light.z
+            Lr, Lg, Lb = light.color
+            I0 = light.I0
 
+            Lvx = Lx - Px
+            Lvy = Ly - Py
+            Lvz = Lz - Pz
 
-        Vx =Ox -Px 
-        Vy =Oy -Py 
-        Vz =Oz -Pz 
-        Vx ,Vy ,Vz =self ._normalize (Vx ,Vy ,Vz )
+            dist_sq = Lvx * Lvx + Lvy * Lvy + Lvz * Lvz
+            dist = np.sqrt(dist_sq)
 
+            Lvxn, Lvyn, Lvzn = self._normalize(Lvx, Lvy, Lvz)
 
-        R_img =np .zeros_like (Px ,dtype =float )
-        G_img =np .zeros_like (Px ,dtype =float )
-        B_img =np .zeros_like (Px ,dtype =float )
+            attenuation = np.zeros_like(dist)
+            valid_dist = dist > 1e-6
+            attenuation[valid_dist] = I0 / (dist_sq[valid_dist] + 1e-10)
 
+            ndotl = Nx * Lvxn + Ny * Lvyn + Nz * Lvzn
+            ndotl = np.maximum(ndotl, 0.0)
 
-        Ia =float (self .shading .I_ambient )
-        ka =float (self .shading .k_a )
-        kd =float (self .shading .k_d )
-        ks =float (self .shading .k_s )
-        n =float (self .shading .shininess )
+            shadow = np.zeros_like(Px, dtype=bool)
 
+            for sphere_idx, sphere in enumerate(self.spheres):
+                if sphere_idx == 0:
+                    point_mask = (sphere_id == 0) & hit_mask
+                    other_sphere = self.spheres[1]
+                else:
+                    point_mask = (sphere_id == 1) & hit_mask
+                    other_sphere = self.spheres[0]
 
-        for idx ,sphere in enumerate (self .spheres ):
-            mask =sphere_id ==idx 
-            if np .any (mask ):
-                sr ,sg ,sb =sphere .color 
-                R_img [mask ]+=ka *Ia *sr 
-                G_img [mask ]+=ka *Ia *sg 
-                B_img [mask ]+=ka *Ia *sb 
+                if not np.any(point_mask):
+                    continue
 
+                ray_origin_x = Px[point_mask]
+                ray_origin_y = Py[point_mask]
+                ray_origin_z = Pz[point_mask]
 
-        for light in self .lights :
-            Lx ,Ly ,Lz =light .x ,light .y ,light .z 
-            Lr ,Lg ,Lb =light .color 
-            I0 =light .I0 
+                ray_dir_x = Lvxn[point_mask]
+                ray_dir_y = Lvyn[point_mask]
+                ray_dir_z = Lvzn[point_mask]
 
-
-            Lvx =Lx -Px 
-            Lvy =Ly -Py 
-            Lvz =Lz -Pz 
-
-
-            dist_sq =Lvx *Lvx +Lvy *Lvy +Lvz *Lvz 
-            dist =np .sqrt (dist_sq )
-
-
-            Lvxn ,Lvyn ,Lvzn =self ._normalize (Lvx ,Lvy ,Lvz )
-
-
-            attenuation =np .zeros_like (dist )
-            valid_dist =dist >1e-6 
-            attenuation [valid_dist ]=I0 /(dist_sq [valid_dist ]+1e-10 )
-
-
-            ndotl =Nx *Lvxn +Ny *Lvyn +Nz *Lvzn 
-            ndotl =np .maximum (ndotl ,0.0 )
-
-
-            shadow =np .zeros_like (Px ,dtype =bool )
-
-
-            for sphere_idx ,sphere in enumerate (self .spheres ):
-
-                if sphere_idx ==0 :
-                    point_mask =(sphere_id ==0 )&hit_mask 
-
-                    other_sphere =self .spheres [1 ]
-                else :
-                    point_mask =(sphere_id ==1 )&hit_mask 
-
-                    other_sphere =self .spheres [0 ]
-
-                if not np .any (point_mask ):
-                    continue 
-
-
-                ray_origin_x =Px [point_mask ]
-                ray_origin_y =Py [point_mask ]
-                ray_origin_z =Pz [point_mask ]
-
-                ray_dir_x =Lvxn [point_mask ]
-                ray_dir_y =Lvyn [point_mask ]
-                ray_dir_z =Lvzn [point_mask ]
-
-
-                t_shadow ,hit_shadow =self ._ray_sphere_intersection (
-                ray_origin_x ,ray_origin_y ,ray_origin_z ,
-                ray_dir_x ,ray_dir_y ,ray_dir_z ,
-                other_sphere .cx ,other_sphere .cy ,other_sphere .cz ,
-                other_sphere .radius 
+                t_shadow, hit_shadow = self._ray_sphere_intersection(
+                    ray_origin_x, ray_origin_y, ray_origin_z,
+                    ray_dir_x, ray_dir_y, ray_dir_z,
+                    other_sphere.cx, other_sphere.cy, other_sphere.cz,
+                    other_sphere.radius
                 )
 
+                dist_to_light = dist[point_mask]
+                shadow_mask = hit_shadow & (t_shadow > 1e-4) & (t_shadow < dist_to_light - 1e-4)
 
-                dist_to_light =dist [point_mask ]
-                shadow_mask =hit_shadow &(t_shadow >1e-4 )&(t_shadow <dist_to_light -1e-4 )
+                shadow_indices = np.where(point_mask)
+                temp_shadow = np.zeros_like(Px, dtype=bool)
 
+                for i in range(len(shadow_indices[0])):
+                    idx_y, idx_x = shadow_indices[0][i], shadow_indices[1][i]
+                    if i < len(shadow_mask):
+                        temp_shadow[idx_y, idx_x] = shadow_mask.flat[i]
 
-                shadow_indices =np .where (point_mask )
-                temp_shadow =np .zeros_like (Px ,dtype =bool )
+                shadow = shadow | temp_shadow
 
+            diffuse = np.zeros_like(Px)
+            light_mask = hit_mask & (~shadow) & (ndotl > 0)
+            diffuse[light_mask] = kd * ndotl[light_mask] * attenuation[light_mask]
 
-                for i in range (len (shadow_indices [0 ])):
-                    idx_y ,idx_x =shadow_indices [0 ][i ],shadow_indices [1 ][i ]
-                    if i <len (shadow_mask ):
-                        temp_shadow [idx_y ,idx_x ]=shadow_mask .flat [i ]
+            specular = np.zeros_like(Px)
 
-                shadow =shadow |temp_shadow 
+            if ks > 0:
+                Hx = Lvxn + Vx
+                Hy = Lvyn + Vy
+                Hz = Lvzn + Vz
+                Hx, Hy, Hz = self._normalize(Hx, Hy, Hz)
 
+                ndoth = Nx * Hx + Ny * Hy + Nz * Hz
+                ndoth = np.maximum(ndoth, 0.0)
 
-            diffuse =np .zeros_like (Px )
-            light_mask =hit_mask &(~shadow )&(ndotl >0 )
-            diffuse [light_mask ]=kd *ndotl [light_mask ]*attenuation [light_mask ]
+                specular_mask = light_mask & (ndoth > 0)
+                specular[specular_mask] = ks * (ndoth[specular_mask] ** n) * attenuation[specular_mask]
 
+            for idx, sphere in enumerate(self.spheres):
+                mask = (sphere_id == idx) & light_mask
+                if np.any(mask):
+                    sr, sg, sb = sphere.color
 
-            specular =np .zeros_like (Px )
+                    R_img[mask] += sr * diffuse[mask] * Lr
+                    G_img[mask] += sg * diffuse[mask] * Lg
+                    B_img[mask] += sb * diffuse[mask] * Lb
 
-            if ks >0 :
+                    R_img[mask] += specular[mask] * Lr
+                    G_img[mask] += specular[mask] * Lg
+                    B_img[mask] += specular[mask] * Lb
 
-                Hx =Lvxn +Vx 
-                Hy =Lvyn +Vy 
-                Hz =Lvzn +Vz 
-                Hx ,Hy ,Hz =self ._normalize (Hx ,Hy ,Hz )
+        max_val = max(np.max(R_img), np.max(G_img), np.max(B_img), 1.0)
 
-                ndoth =Nx *Hx +Ny *Hy +Nz *Hz 
-                ndoth =np .maximum (ndoth ,0.0 )
+        R_norm = np.clip(R_img / max_val, 0.0, 1.0)
+        G_norm = np.clip(G_img / max_val, 0.0, 1.0)
+        B_norm = np.clip(B_img / max_val, 0.0, 1.0)
 
-                specular_mask =light_mask &(ndoth >0 )
-                specular [specular_mask ]=ks *(ndoth [specular_mask ]**n )*attenuation [specular_mask ]
+        gamma = 1.0 / 2.2
+        R_gamma = R_norm ** gamma
+        G_gamma = G_norm ** gamma
+        B_gamma = B_norm ** gamma
 
+        img = np.stack([R_gamma, G_gamma, B_gamma], axis=-1)
+        img = (img * 255).astype(np.uint8)
 
-            for idx ,sphere in enumerate (self .spheres ):
-                mask =(sphere_id ==idx )&light_mask 
-                if np .any (mask ):
-                    sr ,sg ,sb =sphere .color 
+        img[~hit_mask] = [0, 0, 0]
 
-
-                    R_img [mask ]+=sr *diffuse [mask ]*Lr 
-                    G_img [mask ]+=sg *diffuse [mask ]*Lg 
-                    B_img [mask ]+=sb *diffuse [mask ]*Lb 
-
-
-                    R_img [mask ]+=specular [mask ]*Lr 
-                    G_img [mask ]+=specular [mask ]*Lg 
-                    B_img [mask ]+=specular [mask ]*Lb 
-
-
-        max_val =max (np .max (R_img ),np .max (G_img ),np .max (B_img ),1.0 )
-
-
-        R_norm =np .clip (R_img /max_val ,0.0 ,1.0 )
-        G_norm =np .clip (G_img /max_val ,0.0 ,1.0 )
-        B_norm =np .clip (B_img /max_val ,0.0 ,1.0 )
-
-
-        gamma =1.0 /2.2 
-        R_gamma =R_norm **gamma 
-        G_gamma =G_norm **gamma 
-        B_gamma =B_norm **gamma 
-
-
-        img =np .stack ([R_gamma ,G_gamma ,B_gamma ],axis =-1 )
-        img =(img *255 ).astype (np .uint8 )
-
-
-        img [~hit_mask ]=[0 ,0 ,0 ]
-
-        self .rgb_img =img 
-        return img 
+        self.rgb_img = img
+        return img
 
     def save_image (self ,filename :str ):
         if self .rgb_img is None :
             return 
         Image .fromarray (self .rgb_img ,mode ="RGB").save (filename )
 
-    def show_image (self ):
-        if self .rgb_img is None :
-            return 
 
-        plt .figure (figsize =(10 ,8 ))
-        plt .imshow (self .rgb_img ,
-        extent =[-self .screen .W_mm /2 ,self .screen .W_mm /2 ,
-        -self .screen .H_mm /2 ,self .screen .H_mm /2 ],
-        origin ='lower')
-        plt .title ("Распределение яркости на сферах")
-        plt .xlabel ("X, мм")
-        plt .ylabel ("Y, мм")
-        plt .tight_layout ()
-        plt .show ()
+    def show_image(self):
+        if self.rgb_img is None:
+            return
+
+        plt.figure(figsize=(10, 8))
+        plt.imshow(
+            self.rgb_img,
+            extent=[-self.screen.W_mm / 2, self.screen.W_mm / 2,
+                    -self.screen.H_mm / 2, self.screen.H_mm / 2],
+            origin='lower'
+        )
+        title = getattr(self, "view_title", "Render")
+        plt.title(title)
+        x_label, y_label = getattr(self, "axis_labels", ("X", "Y"))
+        plt.xlabel(f"{x_label}, ??")
+        plt.ylabel(f"{y_label}, ??")
+        plt.tight_layout()
+        plt.show()
 
     def show_scene_projections (self ):
         fig ,axes =plt .subplots (1 ,3 ,figsize =(15 ,5 ))
@@ -622,6 +612,12 @@ class TwoSpheresApp (tk .Tk ):
         row =row ,column =0 ,columnspan =3 ,pady =15 ,padx =20 
         )
 
+        row +=1 
+        ttk .Button (self .content ,text ="Render 3 views (Z/X/Y)",
+        command =self ._on_calculate_views ).grid (
+        row =row ,column =0 ,columnspan =3 ,pady =5 ,padx =20 
+        )
+
     def _browse_file (self ):
 
         fname =filedialog .asksaveasfilename (
@@ -736,7 +732,7 @@ class TwoSpheresApp (tk .Tk ):
         try :
 
             renderer =TwoSpheresRenderer (screen ,lights ,spheres ,viewer ,shading )
-            renderer .compute ()
+            renderer .compute ("z")
 
 
             renderer .save_image (self .output_path .get ())
@@ -748,6 +744,32 @@ class TwoSpheresApp (tk .Tk ):
         except Exception as e :
             messagebox .showerror ("Ошибка расчета",str (e ))
             self .status_var .set ("Ошибка при расчете")
+
+
+
+    def _on_calculate_views(self):
+
+        params = self._read_parameters()
+        if params is None:
+            return
+
+        screen, lights, spheres, viewer, shading = params
+        base = Path(self.output_path.get())
+        views = [("z", "front"), ("x", "side"), ("y", "top")]
+        saved = []
+
+        try:
+            for axis, suffix in views:
+                renderer = TwoSpheresRenderer(screen, lights, spheres, viewer, shading)
+                renderer.compute(axis)
+                out_path = base.parent / f"{base.stem}_{suffix}{base.suffix}"
+                renderer.save_image(str(out_path))
+                renderer.show_image()
+                saved.append(str(out_path))
+
+            messagebox.showinfo("Done", "Saved images:\n" + "\n".join(saved))
+        except Exception as e:
+            messagebox.showerror("Render error", str(e))
 
 
 def main ():
