@@ -1,616 +1,759 @@
-import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
-from dataclasses import dataclass
-from typing import List, Tuple
-import numpy as np
-from PIL import Image
-import matplotlib.pyplot as plt
+import tkinter as tk 
+from tkinter import ttk ,messagebox ,filedialog 
+from dataclasses import dataclass 
+from typing import List ,Tuple 
+import numpy as np 
+from PIL import Image 
+import matplotlib .pyplot as plt 
 
 
-@dataclass
-class LightSource:
-    x: float
-    y: float
-    z: float
-    I0: float
-    color: Tuple[float, float, float]
+@dataclass 
+class LightSource :
+    x :float 
+    y :float 
+    z :float 
+    I0 :float 
+    color :Tuple [float ,float ,float ]
 
 
-@dataclass
-class Sphere:
-    cx: float
-    cy: float
-    cz: float
-    radius: float
-    color: Tuple[float, float, float]
+@dataclass 
+class Sphere :
+    cx :float 
+    cy :float 
+    cz :float 
+    radius :float 
+    color :Tuple [float ,float ,float ]
 
 
-@dataclass
-class Viewer:
-    z: float
+@dataclass 
+class Viewer :
+    z :float 
 
 
-@dataclass
-class ShadingParams:
-    k_a: float
-    k_d: float
-    k_s: float
-    shininess: float
-    I_ambient: float
+@dataclass 
+class ShadingParams :
+    k_a :float 
+    k_d :float 
+    k_s :float 
+    shininess :float 
+    I_ambient :float 
 
 
-@dataclass
-class Screen:
-    W_mm: float
-    H_mm: float
-    W_res: int
-    H_res: int
+@dataclass 
+class Screen :
+    W_mm :float 
+    H_mm :float 
+    W_res :int 
+    H_res :int 
 
 
-class TwoSpheresRenderer:
-    def __init__(self, screen: Screen, lights: List[LightSource],
-                 spheres: List[Sphere], viewer: Viewer, shading: ShadingParams):
-        assert len(spheres) == 2, "Нужно передать ровно две сферы"
-        self.screen = screen
-        self.lights = lights
-        self.spheres = spheres
-        self.viewer = viewer
-        self.shading = shading
+class TwoSpheresRenderer :
+    def __init__ (self ,screen :Screen ,lights :List [LightSource ],
+    spheres :List [Sphere ],viewer :Viewer ,shading :ShadingParams ):
+        assert len (spheres )==2 
+        self .screen =screen 
+        self .lights =lights 
+        self .spheres =spheres 
+        self .viewer =viewer 
+        self .shading =shading 
+        self .rgb_img =None 
+        self .x_vals =None 
+        self .y_vals =None 
 
-        self.rgb_img = None
-        self.x_vals = None
-        self.y_vals = None
+    @staticmethod 
+    def _normalize (vx ,vy ,vz ,eps =1e-10 ):
 
-    @staticmethod
-    def _normalize(vx, vy, vz):
-        r = np.sqrt(vx * vx + vy * vy + vz * vz)
-        r[r == 0] = 1e-6
-        return vx / r, vy / r, vz / r
+        length =np .sqrt (vx *vx +vy *vy +vz *vz +eps )
+        return vx /length ,vy /length ,vz /length 
 
-    @staticmethod
-    def _ray_sphere_intersection(Px, Py, Pz,
-                                 Lx, Ly, Lz,
-                                 sphere: Sphere):
-        Dx = Lx - Px
-        Dy = Ly - Py
-        Dz = Lz - Pz
+    @staticmethod 
+    def _ray_sphere_intersection (Ox ,Oy ,Oz ,Dx ,Dy ,Dz ,Cx ,Cy ,Cz ,R ):
 
-        Ox = Px - sphere.cx
-        Oy = Py - sphere.cy
-        Oz = Pz - sphere.cz
+        ocx =Ox -Cx 
+        ocy =Oy -Cy 
+        ocz =Oz -Cz 
 
-        a = Dx * Dx + Dy * Dy + Dz * Dz
-        b = 2.0 * (Ox * Dx + Oy * Dy + Oz * Dz)
-        c = Ox * Ox + Oy * Oy + Oz * Oz - sphere.radius ** 2
+        a =Dx *Dx +Dy *Dy +Dz *Dz 
+        b =2.0 *(Dx *ocx +Dy *ocy +Dz *ocz )
+        c =ocx *ocx +ocy *ocy +ocz *ocz -R *R 
 
-        disc = b * b - 4.0 * a * c
-        mask_disc = disc > 0.0
-        if not np.any(mask_disc):
-            return np.zeros_like(Px, dtype=bool)
+        discriminant =b *b -4.0 *a *c 
 
-        sqrt_disc = np.zeros_like(Px)
-        sqrt_disc[mask_disc] = np.sqrt(disc[mask_disc])
+        hit =discriminant >0.0 
+        t =np .full_like (Dx ,np .inf ,dtype =float )
 
-        t1 = (-b - sqrt_disc) / (2.0 * a)
-        t2 = (-b + sqrt_disc) / (2.0 * a)
+        sqrt_disc =np .sqrt (np .maximum (discriminant ,0.0 ))
+        t1 =(-b -sqrt_disc )/(2.0 *a +1e-10 )
+        t2 =(-b +sqrt_disc )/(2.0 *a +1e-10 )
 
-        eps = 1e-4
-        hit1 = (t1 > eps) & (t1 < 1.0 - eps)
-        hit2 = (t2 > eps) & (t2 < 1.0 - eps)
-        return hit1 | hit2
+        t_candidate =np .where ((t1 >1e-6 )&(t1 <t2 ),t1 ,t2 )
+        hit =hit &(t_candidate >1e-6 )
+        t [hit ]=t_candidate [hit ]
 
-    def compute(self):
-        W_mm = self.screen.W_mm
-        H_mm = self.screen.H_mm
-        W_res = self.screen.W_res
-        H_res = self.screen.H_res
+        return t ,hit 
 
-        x_min, x_max = -W_mm / 2.0, W_mm / 2.0
-        y_min, y_max = -H_mm / 2.0, H_mm / 2.0
+    def compute (self ):
+        W =self .screen .W_mm 
+        H =self .screen .H_mm 
+        Wres =self .screen .W_res 
+        Hres =self .screen .H_res 
 
-        x_vals = np.linspace(x_min, x_max, W_res)
-        y_vals = np.linspace(y_min, y_max, H_res)
-        X, Y = np.meshgrid(x_vals, y_vals)
 
-        self.x_vals = x_vals
-        self.y_vals = y_vals
+        xs =np .linspace (-W /2 ,W /2 ,Wres )
+        ys =np .linspace (-H /2 ,H /2 ,Hres )
+        Xs ,Ys =np .meshgrid (xs ,ys )
 
-        img = np.zeros((H_res, W_res, 3), dtype=float)
-        z_buffer = np.full((H_res, W_res), np.inf, dtype=float)
+        self .x_vals =xs 
+        self .y_vals =ys 
 
-        k_a = self.shading.k_a
-        k_d = self.shading.k_d
-        k_s = self.shading.k_s
-        n = self.shading.shininess
-        I_amb = self.shading.I_ambient
-        z_O = self.viewer.z
 
-        for s_idx, sphere in enumerate(self.spheres):
-            dx = X - sphere.cx
-            dy = Y - sphere.cy
-            rho2 = dx * dx + dy * dy
-            R2 = sphere.radius ** 2
+        Ox ,Oy ,Oz =0.0 ,0.0 ,self .viewer .z 
 
-            inside = rho2 <= R2
-            if not np.any(inside):
-                continue
 
-            z_offset = np.zeros_like(X)
-            z_offset[inside] = np.sqrt(R2 - rho2[inside])
+        Dx =Xs -Ox 
+        Dy =Ys -Oy 
+        Dz =-Oz *np .ones_like (Xs )
+        Dx ,Dy ,Dz =self ._normalize (Dx ,Dy ,Dz )
 
-            if z_O < sphere.cz:
-                Z = sphere.cz - z_offset
-            else:
-                Z = sphere.cz + z_offset
 
-            dist_to_viewer = np.abs(Z - z_O)
-            visible = inside & (dist_to_viewer < z_buffer)
+        t_hit =np .full_like (Xs ,np .inf ,dtype =float )
+        sphere_id =np .full_like (Xs ,-1 ,dtype =int )
+        hit_mask =np .zeros_like (Xs ,dtype =bool )
 
-            if not np.any(visible):
-                continue
 
-            z_buffer[visible] = dist_to_viewer[visible]
+        for idx ,sphere in enumerate (self .spheres ):
+            t ,hit =self ._ray_sphere_intersection (
+            Ox ,Oy ,Oz ,Dx ,Dy ,Dz ,
+            sphere .cx ,sphere .cy ,sphere .cz ,sphere .radius 
+            )
 
-            Px = X[visible]
-            Py = Y[visible]
-            Pz = Z[visible]
 
-            Nx = (Px - sphere.cx) / sphere.radius
-            Ny = (Py - sphere.cy) / sphere.radius
-            Nz = (Pz - sphere.cz) / sphere.radius
+            mask =hit &(t <t_hit )
+            t_hit [mask ]=t [mask ]
+            sphere_id [mask ]=idx 
+            hit_mask =hit_mask |mask 
 
-            Vx = -Px
-            Vy = -Py
-            Vz = z_O - Pz
-            Vx, Vy, Vz = self._normalize(Vx, Vy, Vz)
 
-            C_sphere = np.array(sphere.color, dtype=float)
-            pixel_color = (k_a * I_amb) * np.tile(C_sphere, (Px.size, 1))
+        if not np .any (hit_mask ):
+            self .rgb_img =np .zeros ((Hres ,Wres ,3 ),dtype =np .uint8 )
+            return self .rgb_img 
 
-            for light in self.lights:
-                Lx = light.x - Px
-                Ly = light.y - Py
-                Lz = light.z - Pz
-                r_L = np.sqrt(Lx * Lx + Ly * Ly + Lz * Lz)
-                r_L[r_L == 0] = 1e-6
-                Lx_n = Lx / r_L
-                Ly_n = Ly / r_L
-                Lz_n = Lz / r_L
 
-                Hx = Lx_n + Vx
-                Hy = Ly_n + Vy
-                Hz = Lz_n + Vz
-                Hx, Hy, Hz = self._normalize(Hx, Hy, Hz)
+        Px =Ox +Dx *t_hit 
+        Py =Oy +Dy *t_hit 
+        Pz =Oz +Dz *t_hit 
 
-                N_dot_L = Nx * Lx_n + Ny * Ly_n + Nz * Lz_n
-                N_dot_L = np.clip(N_dot_L, 0.0, None)
 
-                N_dot_H = Nx * Hx + Ny * Hy + Nz * Hz
-                N_dot_H = np.clip(N_dot_H, 0.0, None)
+        Nx =np .zeros_like (Px )
+        Ny =np .zeros_like (Py )
+        Nz =np .zeros_like (Pz )
 
-                attenuation = light.I0 / (r_L ** 2)
+        for idx ,sphere in enumerate (self .spheres ):
+            mask =(sphere_id ==idx )&hit_mask 
+            if np .any (mask ):
+                Nx [mask ]=(Px [mask ]-sphere .cx )/sphere .radius 
+                Ny [mask ]=(Py [mask ]-sphere .cy )/sphere .radius 
+                Nz [mask ]=(Pz [mask ]-sphere .cz )/sphere .radius 
 
-                shadow_mask = np.zeros_like(Px, dtype=bool)
-                for other_idx, other_sphere in enumerate(self.spheres):
-                    if other_idx == s_idx:
-                        continue
-                    shadow_here = self._ray_sphere_intersection(
-                        Px, Py, Pz,
-                        light.x * np.ones_like(Px),
-                        light.y * np.ones_like(Py),
-                        light.z * np.ones_like(Pz),
-                        other_sphere,
-                    )
-                    shadow_mask |= shadow_here
+        Nx ,Ny ,Nz =self ._normalize (Nx ,Ny ,Nz )
 
-                visibility = (~shadow_mask).astype(float)
 
-                I_diff = k_d * attenuation * N_dot_L * visibility
-                I_spec = k_s * attenuation * (N_dot_H ** n) * visibility
+        Vx =Ox -Px 
+        Vy =Oy -Py 
+        Vz =Oz -Pz 
+        Vx ,Vy ,Vz =self ._normalize (Vx ,Vy ,Vz )
 
-                light_color = np.array(light.color, dtype=float)
 
-                pixel_color += (
-                    (I_diff[:, None] * C_sphere[None, :] +
-                     I_spec[:, None]) * light_color[None, :]
+        R_img =np .zeros_like (Px ,dtype =float )
+        G_img =np .zeros_like (Px ,dtype =float )
+        B_img =np .zeros_like (Px ,dtype =float )
+
+
+        Ia =float (self .shading .I_ambient )
+        ka =float (self .shading .k_a )
+        kd =float (self .shading .k_d )
+        ks =float (self .shading .k_s )
+        n =float (self .shading .shininess )
+
+
+        for idx ,sphere in enumerate (self .spheres ):
+            mask =sphere_id ==idx 
+            if np .any (mask ):
+                sr ,sg ,sb =sphere .color 
+                R_img [mask ]+=ka *Ia *sr 
+                G_img [mask ]+=ka *Ia *sg 
+                B_img [mask ]+=ka *Ia *sb 
+
+
+        for light in self .lights :
+            Lx ,Ly ,Lz =light .x ,light .y ,light .z 
+            Lr ,Lg ,Lb =light .color 
+            I0 =light .I0 
+
+
+            Lvx =Lx -Px 
+            Lvy =Ly -Py 
+            Lvz =Lz -Pz 
+
+
+            dist_sq =Lvx *Lvx +Lvy *Lvy +Lvz *Lvz 
+            dist =np .sqrt (dist_sq )
+
+
+            Lvxn ,Lvyn ,Lvzn =self ._normalize (Lvx ,Lvy ,Lvz )
+
+
+            attenuation =np .zeros_like (dist )
+            valid_dist =dist >1e-6 
+            attenuation [valid_dist ]=I0 /(dist_sq [valid_dist ]+1e-10 )
+
+
+            ndotl =Nx *Lvxn +Ny *Lvyn +Nz *Lvzn 
+            ndotl =np .maximum (ndotl ,0.0 )
+
+
+            shadow =np .zeros_like (Px ,dtype =bool )
+
+
+            for sphere_idx ,sphere in enumerate (self .spheres ):
+
+                if sphere_idx ==0 :
+                    point_mask =(sphere_id ==0 )&hit_mask 
+
+                    other_sphere =self .spheres [1 ]
+                else :
+                    point_mask =(sphere_id ==1 )&hit_mask 
+
+                    other_sphere =self .spheres [0 ]
+
+                if not np .any (point_mask ):
+                    continue 
+
+
+                ray_origin_x =Px [point_mask ]
+                ray_origin_y =Py [point_mask ]
+                ray_origin_z =Pz [point_mask ]
+
+                ray_dir_x =Lvxn [point_mask ]
+                ray_dir_y =Lvyn [point_mask ]
+                ray_dir_z =Lvzn [point_mask ]
+
+
+                t_shadow ,hit_shadow =self ._ray_sphere_intersection (
+                ray_origin_x ,ray_origin_y ,ray_origin_z ,
+                ray_dir_x ,ray_dir_y ,ray_dir_z ,
+                other_sphere .cx ,other_sphere .cy ,other_sphere .cz ,
+                other_sphere .radius 
                 )
 
-            img[visible, :] = pixel_color
 
-        I_max = img.max()
-        if I_max <= 0:
-            I_max = 1.0
-        img_norm = np.clip(img / I_max * 255.0, 0, 255).astype(np.uint8)
-        self.rgb_img = img_norm
-        return img_norm
-
-    def save_image(self, filename: str):
-        if self.rgb_img is None:
-            return
-        Image.fromarray(self.rgb_img, mode="RGB").save(filename)
-
-    def show_image(self):
-        if self.rgb_img is None:
-            return
-        x_min, x_max = self.x_vals[0], self.x_vals[-1]
-        y_min, y_max = self.y_vals[0], self.y_vals[-1]
-
-        plt.figure()
-        plt.imshow(self.rgb_img, extent=[x_min, x_max, y_max, y_min])
-        plt.title("Распределение яркости на сферах")
-        plt.xlabel("x, мм")
-        plt.ylabel("y, мм")
-        plt.tight_layout()
-        plt.show()
-
-    def show_scene_projections(self):
-        s1, s2 = self.spheres
-        lights = self.lights
-        viewer = self.viewer
-
-        fig, axes = plt.subplots(1, 3, figsize=(12, 4))
-
-        ax = axes[0]
-        for s, col in zip(self.spheres, ["tab:blue", "tab:orange"]):
-            circ = plt.Circle((s.cx, s.cy), s.radius, fill=False, color=col)
-            ax.add_patch(circ)
-            ax.plot(s.cx, s.cy, "o", color=col)
-        for i, L in enumerate(lights):
-            ax.plot(L.x, L.y, "*", markersize=8, label=f"LS{i+1}")
-        ax.plot(0, 0, "^", label="Viewer")
-        ax.set_xlabel("X, мм")
-        ax.set_ylabel("Y, мм")
-        ax.set_title("Проекция XY")
-        ax.axis("equal")
-        ax.grid(True)
-        ax.legend(fontsize=8)
-
-        ax = axes[1]
-        for s, col in zip(self.spheres, ["tab:blue", "tab:orange"]):
-            circ = plt.Circle((s.cx, s.cz), s.radius, fill=False, color=col)
-            ax.add_patch(circ)
-            ax.plot(s.cx, s.cz, "o", color=col)
-        for i, L in enumerate(lights):
-            ax.plot(L.x, L.z, "*", markersize=8, label=f"LS{i+1}")
-        ax.plot(0, viewer.z, "^", label="Viewer")
-        ax.set_xlabel("X, мм")
-        ax.set_ylabel("Z, мм")
-        ax.set_title("Проекция XZ")
-        ax.axis("equal")
-        ax.grid(True)
-        ax.legend(fontsize=8)
-
-        ax = axes[2]
-        for s, col in zip(self.spheres, ["tab:blue", "tab:orange"]):
-            circ = plt.Circle((s.cy, s.cz), s.radius, fill=False, color=col)
-            ax.add_patch(circ)
-            ax.plot(s.cy, s.cz, "o", color=col)
-        for i, L in enumerate(lights):
-            ax.plot(L.y, L.z, "*", markersize=8, label=f"LS{i+1}")
-        ax.plot(0, viewer.z, "^", label="Viewer")
-        ax.set_xlabel("Y, мм")
-        ax.set_ylabel("Z, мм")
-        ax.set_title("Проекция YZ")
-        ax.axis("equal")
-        ax.grid(True)
-        ax.legend(fontsize=8)
-
-        plt.tight_layout()
-        plt.show()
+                dist_to_light =dist [point_mask ]
+                shadow_mask =hit_shadow &(t_shadow >1e-4 )&(t_shadow <dist_to_light -1e-4 )
 
 
-class TwoSpheresApp(tk.Tk):
-    def __init__(self):
-        super().__init__()
-        self.title("ЛР-5: яркость, цвета, тени (Блинн-Фонг)")
+                shadow_indices =np .where (point_mask )
+                temp_shadow =np .zeros_like (Px ,dtype =bool )
 
-        self.entries = {}
-        self.light_entries = []
-        self.light_row_widgets = []
-        self.light_frame = None
-        self.output_path = tk.StringVar(value="two_spheres_color_shadow.png")
-        self.status_var = tk.StringVar(value="")
 
-        self._build_ui()
+                for i in range (len (shadow_indices [0 ])):
+                    idx_y ,idx_x =shadow_indices [0 ][i ],shadow_indices [1 ][i ]
+                    if i <len (shadow_mask ):
+                        temp_shadow [idx_y ,idx_x ]=shadow_mask .flat [i ]
 
-    def _add_field(self, row, label, default):
-        tk.Label(self, text=label, anchor="w").grid(
-            row=row, column=0, sticky="w", padx=5, pady=2
+                shadow =shadow |temp_shadow 
+
+
+            diffuse =np .zeros_like (Px )
+            light_mask =hit_mask &(~shadow )&(ndotl >0 )
+            diffuse [light_mask ]=kd *ndotl [light_mask ]*attenuation [light_mask ]
+
+
+            specular =np .zeros_like (Px )
+
+            if ks >0 :
+
+                Hx =Lvxn +Vx 
+                Hy =Lvyn +Vy 
+                Hz =Lvzn +Vz 
+                Hx ,Hy ,Hz =self ._normalize (Hx ,Hy ,Hz )
+
+                ndoth =Nx *Hx +Ny *Hy +Nz *Hz 
+                ndoth =np .maximum (ndoth ,0.0 )
+
+                specular_mask =light_mask &(ndoth >0 )
+                specular [specular_mask ]=ks *(ndoth [specular_mask ]**n )*attenuation [specular_mask ]
+
+
+            for idx ,sphere in enumerate (self .spheres ):
+                mask =(sphere_id ==idx )&light_mask 
+                if np .any (mask ):
+                    sr ,sg ,sb =sphere .color 
+
+
+                    R_img [mask ]+=sr *diffuse [mask ]*Lr 
+                    G_img [mask ]+=sg *diffuse [mask ]*Lg 
+                    B_img [mask ]+=sb *diffuse [mask ]*Lb 
+
+
+                    R_img [mask ]+=specular [mask ]*Lr 
+                    G_img [mask ]+=specular [mask ]*Lg 
+                    B_img [mask ]+=specular [mask ]*Lb 
+
+
+        max_val =max (np .max (R_img ),np .max (G_img ),np .max (B_img ),1.0 )
+
+
+        R_norm =np .clip (R_img /max_val ,0.0 ,1.0 )
+        G_norm =np .clip (G_img /max_val ,0.0 ,1.0 )
+        B_norm =np .clip (B_img /max_val ,0.0 ,1.0 )
+
+
+        gamma =1.0 /2.2 
+        R_gamma =R_norm **gamma 
+        G_gamma =G_norm **gamma 
+        B_gamma =B_norm **gamma 
+
+
+        img =np .stack ([R_gamma ,G_gamma ,B_gamma ],axis =-1 )
+        img =(img *255 ).astype (np .uint8 )
+
+
+        img [~hit_mask ]=[0 ,0 ,0 ]
+
+        self .rgb_img =img 
+        return img 
+
+    def save_image (self ,filename :str ):
+        if self .rgb_img is None :
+            return 
+        Image .fromarray (self .rgb_img ,mode ="RGB").save (filename )
+
+    def show_image (self ):
+        if self .rgb_img is None :
+            return 
+
+        plt .figure (figsize =(10 ,8 ))
+        plt .imshow (self .rgb_img ,
+        extent =[-self .screen .W_mm /2 ,self .screen .W_mm /2 ,
+        -self .screen .H_mm /2 ,self .screen .H_mm /2 ],
+        origin ='lower')
+        plt .title ("Распределение яркости на сферах")
+        plt .xlabel ("X, мм")
+        plt .ylabel ("Y, мм")
+        plt .tight_layout ()
+        plt .show ()
+
+    def show_scene_projections (self ):
+        fig ,axes =plt .subplots (1 ,3 ,figsize =(15 ,5 ))
+
+
+        ax =axes [0 ]
+        colors =['blue','orange']
+        for idx ,sphere in enumerate (self .spheres ):
+            circle =plt .Circle ((sphere .cx ,sphere .cy ),sphere .radius ,
+            fill =False ,color =colors [idx ],linewidth =2 )
+            ax .add_patch (circle )
+            ax .plot (sphere .cx ,sphere .cy ,'o',color =colors [idx ],
+            label =f'Сфера {idx +1 }')
+
+        for i ,light in enumerate (self .lights ):
+            ax .plot (light .x ,light .y ,'*',markersize =12 ,
+            label =f'Источник {i +1 }')
+
+        ax .plot (0 ,0 ,'^',markersize =10 ,label ='Наблюдатель')
+        ax .set_xlabel ('X, мм')
+        ax .set_ylabel ('Y, мм')
+        ax .set_title ('Проекция XY')
+        ax .grid (True ,alpha =0.3 )
+        ax .legend ()
+        ax .axis ('equal')
+
+
+        ax =axes [1 ]
+        for idx ,sphere in enumerate (self .spheres ):
+            circle =plt .Circle ((sphere .cx ,sphere .cz ),sphere .radius ,
+            fill =False ,color =colors [idx ],linewidth =2 )
+            ax .add_patch (circle )
+            ax .plot (sphere .cx ,sphere .cz ,'o',color =colors [idx ])
+
+        for i ,light in enumerate (self .lights ):
+            ax .plot (light .x ,light .z ,'*',markersize =12 )
+
+        ax .plot (0 ,self .viewer .z ,'^',markersize =10 )
+        ax .axhline (y =0 ,color ='gray',linestyle ='--',alpha =0.5 ,label ='Экран (z=0)')
+        ax .set_xlabel ('X, мм')
+        ax .set_ylabel ('Z, мм')
+        ax .set_title ('Проекция XZ')
+        ax .grid (True ,alpha =0.3 )
+        ax .legend ()
+        ax .axis ('equal')
+
+
+        ax =axes [2 ]
+        for idx ,sphere in enumerate (self .spheres ):
+            circle =plt .Circle ((sphere .cy ,sphere .cz ),sphere .radius ,
+            fill =False ,color =colors [idx ],linewidth =2 )
+            ax .add_patch (circle )
+            ax .plot (sphere .cy ,sphere .cz ,'o',color =colors [idx ])
+
+        for i ,light in enumerate (self .lights ):
+            ax .plot (light .y ,light .z ,'*',markersize =12 )
+
+        ax .plot (0 ,self .viewer .z ,'^',markersize =10 )
+        ax .axhline (y =0 ,color ='gray',linestyle ='--',alpha =0.5 )
+        ax .set_xlabel ('Y, мм')
+        ax .set_ylabel ('Z, мм')
+        ax .set_title ('Проекция YZ')
+        ax .grid (True ,alpha =0.3 )
+        ax .legend ()
+        ax .axis ('equal')
+
+        plt .tight_layout ()
+        plt .show ()
+
+
+class TwoSpheresApp (tk .Tk ):
+    def __init__ (self ):
+        super ().__init__ ()
+        self .title ("Лабораторная работа №5: Тени и освещение")
+
+
+        self .geometry ("500x700")
+
+        self .canvas =tk .Canvas (self ,borderwidth =0 )
+        self .vscroll =ttk .Scrollbar (self ,orient ="vertical",command =self .canvas .yview )
+        self .canvas .configure (yscrollcommand =self .vscroll .set )
+        self .vscroll .grid (row =0 ,column =1 ,sticky ="ns")
+        self .canvas .grid (row =0 ,column =0 ,sticky ="nsew")
+        self .columnconfigure (0 ,weight =1 )
+        self .rowconfigure (0 ,weight =1 )
+        self .content =ttk .Frame (self .canvas )
+        self .canvas .create_window ((0 ,0 ),window =self .content ,anchor ="nw")
+        self .content .bind ("<Configure>",lambda e :self .canvas .configure (scrollregion =self .canvas .bbox ("all")))
+        self .canvas .bind_all ("<MouseWheel>",lambda e :self .canvas .yview_scroll (int (-1 *(e .delta /120 )),"units"))
+
+
+        self .entries ={}
+        self .light_entries =[]
+        self .light_row_widgets =[]
+        self .light_frame =None 
+        self .output_path =tk .StringVar (value ="result.png")
+        self .status_var =tk .StringVar (value ="Готово к работе")
+
+        self ._build_ui ()
+
+    def _add_field (self ,parent ,row ,label ,default ):
+
+        tk .Label (parent ,text =label ,anchor ="w").grid (
+        row =row ,column =0 ,sticky ="w",padx =5 ,pady =2 
         )
-        var = tk.StringVar(value=str(default))
-        ent = ttk.Entry(self, textvariable=var, width=15)
-        ent.grid(row=row, column=1, padx=5, pady=2)
-        self.entries[label] = var
+        var =tk .StringVar (value =str (default ))
+        ent =ttk .Entry (parent ,textvariable =var ,width =15 )
+        ent .grid (row =row ,column =1 ,padx =5 ,pady =2 )
+        self .entries [label ]=var 
 
-    def _add_light_row(self, defaults=None):
-        if defaults is None:
-            defaults = {
-                "x": 0.0, "y": 0.0, "z": 500.0, "I0": 1000.0,
-                "R": 1.0, "G": 1.0, "B": 1.0
+    def _add_light_row (self ,defaults =None ):
+
+        if defaults is None :
+            defaults ={
+            "x":-500.0 ,"y":500.0 ,"z":1500.0 ,
+            "I0":1000.0 ,"R":1.0 ,"G":1.0 ,"B":1.0 
             }
-        if self.light_frame is None:
-            return
-        row_index = len(self.light_entries) + 1
-        vars_row = {}
-        row_widgets = []
-        for col, key in enumerate(("x", "y", "z", "I0", "R", "G", "B")):
-            value = defaults.get(key, 0.0)
-            var = tk.StringVar(value=str(value))
-            entry = ttk.Entry(self.light_frame, textvariable=var, width=8)
-            entry.grid(row=row_index, column=col, padx=3, pady=2)
-            row_widgets.append(entry)
-            vars_row[key] = var
-        self.light_entries.append(vars_row)
-        self.light_row_widgets.append(row_widgets)
 
-    def _remove_light_row(self):
-        if not self.light_entries:
-            return
-        if len(self.light_entries) == 1:
-            messagebox.showwarning("Внимание", "Должен остаться хотя бы один источник света.")
-            return
-        self.light_entries.pop()
-        row_widgets = self.light_row_widgets.pop()
-        for widget in row_widgets:
-            widget.destroy()
+        row_index =len (self .light_entries )+1 
 
-    def _build_ui(self):
-        row = 0
 
-        self._add_field(row, "W_mm", 1000)
-        row += 1
-        self._add_field(row, "H_mm", 1000)
-        row += 1
-        self._add_field(row, "W_res", 400)
-        row += 1
-        self._add_field(row, "H_res", 400)
-        row += 1
+        if row_index ==1 :
+            headers =["X","Y","Z","I0","R","G","B"]
+            for col ,header in enumerate (headers ):
+                tk .Label (self .light_frame ,text =header ,width =8 ,
+                relief ="ridge").grid (row =0 ,column =col ,padx =2 ,pady =2 )
 
-        self.light_entries.clear()
-        self.light_row_widgets.clear()
-        self.light_frame = ttk.LabelFrame(self, text="Источники света")
-        self.light_frame.grid(row=row, column=0, columnspan=3, sticky="we", padx=5, pady=5)
-        for col, text in enumerate(
-                ("x_L (мм)", "y_L (мм)", "z_L (мм)", "I0", "R_L", "G_L", "B_L")):
-            tk.Label(self.light_frame, text=text, anchor="w").grid(
-                row=0, column=col, padx=3, pady=2
-            )
-        self._add_light_row()
-        controls_frame = ttk.Frame(self)
-        controls_frame.grid(row=row + 1, column=0, columnspan=3, pady=5)
-        ttk.Button(controls_frame, text="Добавить источник",
-                   command=self._add_light_row).grid(row=0, column=0, padx=5)
-        ttk.Button(controls_frame, text="Убрать источник",
-                   command=self._remove_light_row).grid(row=0, column=1, padx=5)
-        row += 2
+        vars_row ={}
+        row_widgets =[]
 
-        ttk.Label(self, text="Сфера 1").grid(row=row, column=0, sticky="w", padx=5)
-        row += 1
-        self._add_field(row, "x_C1", -200.0)
-        row += 1
-        self._add_field(row, "y_C1", 0.0)
-        row += 1
-        self._add_field(row, "z_C1", 2000.0)
-        row += 1
-        self._add_field(row, "R1", 800.0)
-        row += 1
-        self._add_field(row, "Rs1", 0.2)
-        row += 1
-        self._add_field(row, "Gs1", 0.8)
-        row += 1
-        self._add_field(row, "Bs1", 0.2)
-        row += 1
+        for col ,key in enumerate (["x","y","z","I0","R","G","B"]):
+            value =defaults .get (key ,0.0 )
+            var =tk .StringVar (value =str (value ))
+            entry =ttk .Entry (self .light_frame ,textvariable =var ,width =8 )
+            entry .grid (row =row_index ,column =col ,padx =2 ,pady =2 )
+            row_widgets .append (entry )
+            vars_row [key ]=var 
 
-        ttk.Label(self, text="Сфера 2").grid(row=row, column=0, sticky="w", padx=5)
-        row += 1
-        self._add_field(row, "x_C2", 300.0)
-        row += 1
-        self._add_field(row, "y_C2", 200.0)
-        row += 1
-        self._add_field(row, "z_C2", 2200.0)
-        row += 1
-        self._add_field(row, "R2", 400.0)
-        row += 1
-        self._add_field(row, "Rs2", 0.9)
-        row += 1
-        self._add_field(row, "Gs2", 0.7)
-        row += 1
-        self._add_field(row, "Bs2", 0.2)
-        row += 1
+        self .light_entries .append (vars_row )
+        self .light_row_widgets .append (row_widgets )
 
-        self._add_field(row, "z_O", 0.0)
-        row += 1
+    def _remove_light_row (self ):
 
-        self._add_field(row, "k_a", 0.1)
-        row += 1
-        self._add_field(row, "k_d", 1.0)
-        row += 1
-        self._add_field(row, "k_s", 0.6)
-        row += 1
-        self._add_field(row, "shininess", 50.0)
-        row += 1
-        self._add_field(row, "I_ambient", 1.0)
-        row += 1
+        if len (self .light_entries )<=1 :
+            messagebox .showwarning ("Внимание","Должен остаться хотя бы один источник света")
+            return 
 
-        tk.Label(self, text="Файл вывода").grid(
-            row=row, column=0, sticky="w", padx=5, pady=2
+        self .light_entries .pop ()
+        row_widgets =self .light_row_widgets .pop ()
+        for widget in row_widgets :
+            widget .destroy ()
+
+    def _build_ui (self ):
+
+        row =0 
+
+
+        ttk .Label (self .content ,text ="Параметры экрана",font =("Arial",10 ,"bold")).grid (
+        row =row ,column =0 ,columnspan =2 ,sticky ="w",padx =5 ,pady =(10 ,2 )
         )
-        ttk.Entry(self, textvariable=self.output_path, width=25).grid(
-            row=row, column=1, padx=5, pady=2
+        row +=1 
+
+        self ._add_field (self .content ,row ,"Ширина (мм)",800 )
+        row +=1 
+        self ._add_field (self .content ,row ,"Высота (мм)",600 )
+        row +=1 
+        self ._add_field (self .content ,row ,"Разрешение X",400 )
+        row +=1 
+        self ._add_field (self .content ,row ,"Разрешение Y",300 )
+        row +=1 
+
+
+        ttk .Label (self .content ,text ="Источники света",font =("Arial",10 ,"bold")).grid (
+        row =row ,column =0 ,columnspan =2 ,sticky ="w",padx =5 ,pady =(10 ,2 )
         )
-        ttk.Button(self, text="...", command=self._browse_file).grid(
-            row=row, column=2, padx=5, pady=2
+        row +=1 
+
+        self .light_frame =ttk .LabelFrame (self .content ,text ="Параметры источников")
+        self .light_frame .grid (row =row ,column =0 ,columnspan =3 ,
+        sticky ="we",padx =5 ,pady =5 )
+        row +=1 
+
+        self ._add_light_row ()
+
+
+        btn_frame =ttk .Frame (self .content )
+        btn_frame .grid (row =row ,column =0 ,columnspan =3 ,pady =5 )
+        ttk .Button (btn_frame ,text ="+ Добавить источник",
+        command =self ._add_light_row ).pack (side =tk .LEFT ,padx =5 )
+        ttk .Button (btn_frame ,text ="- Удалить источник",
+        command =self ._remove_light_row ).pack (side =tk .LEFT ,padx =5 )
+        row +=1 
+
+
+        ttk .Label (self .content ,text ="Сфера 1",font =("Arial",10 ,"bold")).grid (
+        row =row ,column =0 ,columnspan =2 ,sticky ="w",padx =5 ,pady =(10 ,2 )
         )
-        row += 1
+        row +=1 
 
-        status_label = tk.Label(self, textvariable=self.status_var,
-                                anchor="w", fg="gray")
-        status_label.grid(row=row, column=0, columnspan=3,
-                          sticky="we", padx=5, pady=2)
-        row += 1
+        self ._add_field (self .content ,row ,"Центр X1",-150 )
+        row +=1 
+        self ._add_field (self .content ,row ,"Центр Y1",0 )
+        row +=1 
+        self ._add_field (self .content ,row ,"Центр Z1",1200 )
+        row +=1 
+        self ._add_field (self .content ,row ,"Радиус R1",300 )
+        row +=1 
+        self ._add_field (self .content ,row ,"Цвет R1",0.8 )
+        row +=1 
+        self ._add_field (self .content ,row ,"Цвет G1",0.3 )
+        row +=1 
+        self ._add_field (self .content ,row ,"Цвет B1",0.3 )
+        row +=1 
 
-        ttk.Button(self, text="Вычислить и показать",
-                   command=self._on_calculate).grid(
-            row=row, column=0, columnspan=3, pady=10
+
+        ttk .Label (self .content ,text ="Сфера 2",font =("Arial",10 ,"bold")).grid (
+        row =row ,column =0 ,columnspan =2 ,sticky ="w",padx =5 ,pady =(10 ,2 )
         )
+        row +=1 
 
-    def _browse_file(self):
-        fname = filedialog.asksaveasfilename(
-            defaultextension=".png", filetypes=[("PNG", "*.png")]
+        self ._add_field (self .content ,row ,"Центр X2",200 )
+        row +=1 
+        self ._add_field (self .content ,row ,"Центр Y2",100 )
+        row +=1 
+        self ._add_field (self .content ,row ,"Центр Z2",1000 )
+        row +=1 
+        self ._add_field (self .content ,row ,"Радиус R2",180 )
+        row +=1 
+        self ._add_field (self .content ,row ,"Цвет R2",0.3 )
+        row +=1 
+        self ._add_field (self .content ,row ,"Цвет G2",0.3 )
+        row +=1 
+        self ._add_field (self .content ,row ,"Цвет B2",0.8 )
+        row +=1 
+
+
+        ttk .Label (self .content ,text ="Параметры рендеринга",font =("Arial",10 ,"bold")).grid (
+        row =row ,column =0 ,columnspan =2 ,sticky ="w",padx =5 ,pady =(10 ,2 )
         )
-        if fname:
-            self.output_path.set(fname)
+        row +=1 
 
-    def _read_parameters(self):
-        def ensure_range(value, min_value, max_value, name):
-            if value < min_value or value > max_value:
-                raise ValueError(f"{name} выходит за пределы [{min_value}, {max_value}].")
+        self ._add_field (self .content ,row ,"Позиция наблюдателя Z",-800 )
+        row +=1 
+        self ._add_field (self .content ,row ,"Коэф. ambient",0.2 )
+        row +=1 
+        self ._add_field (self .content ,row ,"Коэф. diffuse",0.7 )
+        row +=1 
+        self ._add_field (self .content ,row ,"Коэф. specular",0.5 )
+        row +=1 
+        self ._add_field (self .content ,row ,"Блеск",32 )
+        row +=1 
+        self ._add_field (self .content ,row ,"Фоновое освещение",0.1 )
+        row +=1 
 
-        try:
-            W_mm = float(self.entries["W_mm"].get())
-            H_mm = float(self.entries["H_mm"].get())
-            H_res = int(self.entries["H_res"].get())
 
-            ensure_range(W_mm, 100.0, 10000.0, "W_mm")
-            ensure_range(H_mm, 100.0, 10000.0, "H_mm")
-            ensure_range(H_res, 200, 800, "H_res")
-
-            W_res = int(round(H_res * W_mm / H_mm))
-            ensure_range(W_res, 200, 800, "W_res")
-            self.entries["W_res"].set(str(W_res))
-            self.status_var.set(
-                f"Ширина пересчитана: {W_res} пикс."
-            )
-
-            x_C1 = float(self.entries["x_C1"].get())
-            y_C1 = float(self.entries["y_C1"].get())
-            z_C1 = float(self.entries["z_C1"].get())
-            R1 = float(self.entries["R1"].get())
-
-            ensure_range(x_C1, -10000.0, 10000.0, "x_C1")
-            ensure_range(y_C1, -10000.0, 10000.0, "y_C1")
-            ensure_range(z_C1, 100.0, 10000.0, "z_C1")
-            if R1 <= 0:
-                raise ValueError("R1 должен быть > 0.")
-
-            Rs1 = float(self.entries["Rs1"].get())
-            Gs1 = float(self.entries["Gs1"].get())
-            Bs1 = float(self.entries["Bs1"].get())
-
-            x_C2 = float(self.entries["x_C2"].get())
-            y_C2 = float(self.entries["y_C2"].get())
-            z_C2 = float(self.entries["z_C2"].get())
-            R2 = float(self.entries["R2"].get())
-
-            ensure_range(x_C2, -10000.0, 10000.0, "x_C2")
-            ensure_range(y_C2, -10000.0, 10000.0, "y_C2")
-            ensure_range(z_C2, 100.0, 10000.0, "z_C2")
-            if R2 <= 0:
-                raise ValueError("R2 должен быть > 0.")
-
-            Rs2 = float(self.entries["Rs2"].get())
-            Gs2 = float(self.entries["Gs2"].get())
-            Bs2 = float(self.entries["Bs2"].get())
-
-            for name, val in [
-                ("Rs1", Rs1), ("Gs1", Gs1), ("Bs1", Bs1),
-                ("Rs2", Rs2), ("Gs2", Gs2), ("Bs2", Bs2),
-            ]:
-                ensure_range(val, 0.0, 1.0, name)
-
-            z_O = float(self.entries["z_O"].get())
-            ensure_range(z_O, 0.0, 10000.0, "z_O")
-
-            k_a = float(self.entries["k_a"].get())
-            k_d = float(self.entries["k_d"].get())
-            k_s = float(self.entries["k_s"].get())
-            shininess = float(self.entries["shininess"].get())
-            I_amb = float(self.entries["I_ambient"].get())
-
-            for name, value in (
-                    ("k_a", k_a), ("k_d", k_d),
-                    ("k_s", k_s), ("I_ambient", I_amb)):
-                if value < 0:
-                    raise ValueError(f"{name} должен быть >= 0.")
-            if shininess <= 0:
-                raise ValueError("shininess должен быть > 0.")
-
-            lights = []
-            for idx, vars_row in enumerate(self.light_entries, start=1):
-                values = {key: vars_row[key].get().strip()
-                          for key in ("x", "y", "z", "I0", "R", "G", "B")}
-                if not any(values.values()):
-                    continue
-
-                x_L = float(values["x"])
-                y_L = float(values["y"])
-                z_L = float(values["z"])
-                I0 = float(values["I0"])
-                R_L = float(values["R"])
-                G_L = float(values["G"])
-                B_L = float(values["B"])
-
-                ensure_range(x_L, -10000.0, 10000.0, f"x_L[{idx}]")
-                ensure_range(y_L, -10000.0, 10000.0, f"y_L[{idx}]")
-                ensure_range(z_L, 100.0, 10000.0, f"z_L[{idx}]")
-                ensure_range(I0, 0.01, 10000.0, f"I0[{idx}]")
-                for name, val in [
-                    (f"R_L[{idx}]", R_L),
-                    (f"G_L[{idx}]", G_L),
-                    (f"B_L[{idx}]", B_L),
-                ]:
-                    ensure_range(val, 0.0, 1.0, name)
-
-                lights.append(
-                    LightSource(x=x_L, y=y_L, z=z_L,
-                                I0=I0, color=(R_L, G_L, B_L))
-                )
-
-            if not lights:
-                raise ValueError("Нужно указать хотя бы один источник света.")
-
-        except ValueError as exc:
-            message = str(exc) or "Ошибка ввода параметров."
-            messagebox.showerror("Ошибка", message)
-            return None
-
-        screen = Screen(W_mm=W_mm, H_mm=H_mm, W_res=W_res, H_res=H_res)
-        sphere1 = Sphere(
-            cx=x_C1, cy=y_C1, cz=z_C1, radius=R1,
-            color=(Rs1, Gs1, Bs1)
+        ttk .Label (self .content ,text ="Выходной файл").grid (
+        row =row ,column =0 ,sticky ="w",padx =5 ,pady =2 
         )
-        sphere2 = Sphere(
-            cx=x_C2, cy=y_C2, cz=z_C2, radius=R2,
-            color=(Rs2, Gs2, Bs2)
+        ttk .Entry (self .content ,textvariable =self .output_path ,width =25 ).grid (
+        row =row ,column =1 ,padx =5 ,pady =2 
         )
-        viewer = Viewer(z=z_O)
-        shading = ShadingParams(
-            k_a=k_a, k_d=k_d, k_s=k_s,
-            shininess=shininess, I_ambient=I_amb
+        ttk .Button (self .content ,text ="...",width =3 ,
+        command =self ._browse_file ).grid (
+        row =row ,column =2 ,padx =5 ,pady =2 
+        )
+        row +=1 
+
+
+        status_label =tk .Label (self .content ,textvariable =self .status_var ,
+        anchor ="w",fg ="blue")
+        status_label .grid (row =row ,column =0 ,columnspan =3 ,
+        sticky ="we",padx =5 ,pady =2 )
+        row +=1 
+
+
+        ttk .Button (self .content ,text ="Рассчитать и визуализировать",
+        command =self ._on_calculate ).grid (
+        row =row ,column =0 ,columnspan =3 ,pady =15 ,padx =20 
         )
 
-        return screen, lights, [sphere1, sphere2], viewer, shading
+    def _browse_file (self ):
 
-    def _on_calculate(self):
-        params = self._read_parameters()
-        if params is None:
-            return
+        fname =filedialog .asksaveasfilename (
+        defaultextension =".png",
+        filetypes =[("PNG files","*.png"),("All files","*.*")]
+        )
+        if fname :
+            self .output_path .set (fname )
 
-        screen, lights, spheres, viewer, shading = params
+    def _read_parameters (self ):
 
-        renderer = TwoSpheresRenderer(screen, lights, spheres, viewer, shading)
-        renderer.compute()
-        renderer.save_image(self.output_path.get())
-        renderer.show_image()
-        renderer.show_scene_projections()
+        try :
 
-        messagebox.showinfo("Готово", f"Сохранено: {self.output_path.get()}")
-
-
-def main():
-    app = TwoSpheresApp()
-    app.mainloop()
+            W_mm =float (self .entries ["Ширина (мм)"].get ())
+            H_mm =float (self .entries ["Высота (мм)"].get ())
+            W_res =int (self .entries ["Разрешение X"].get ())
+            H_res =int (self .entries ["Разрешение Y"].get ())
 
 
-if __name__ == "__main__":
-    main()
+            if W_mm <=0 or H_mm <=0 :
+                raise ValueError ("Размеры экрана должны быть положительными")
+            if W_res <100 or H_res <100 :
+                raise ValueError ("Разрешение должно быть не менее 100 пикселей")
+
+
+            lights =[]
+            for idx ,vars_row in enumerate (self .light_entries ):
+                x =float (vars_row ["x"].get ())
+                y =float (vars_row ["y"].get ())
+                z =float (vars_row ["z"].get ())
+                I0 =float (vars_row ["I0"].get ())
+                R =float (vars_row ["R"].get ())
+                G =float (vars_row ["G"].get ())
+                B =float (vars_row ["B"].get ())
+
+                if I0 <=0 :
+                    raise ValueError (f"Интенсивность источника {idx +1 } должна быть положительной")
+
+                lights .append (LightSource (x =x ,y =y ,z =z ,I0 =I0 ,color =(R ,G ,B )))
+
+            if not lights :
+                raise ValueError ("Должен быть хотя бы один источник света")
+
+
+            x1 =float (self .entries ["Центр X1"].get ())
+            y1 =float (self .entries ["Центр Y1"].get ())
+            z1 =float (self .entries ["Центр Z1"].get ())
+            r1 =float (self .entries ["Радиус R1"].get ())
+            cr1 =float (self .entries ["Цвет R1"].get ())
+            cg1 =float (self .entries ["Цвет G1"].get ())
+            cb1 =float (self .entries ["Цвет B1"].get ())
+
+
+            x2 =float (self .entries ["Центр X2"].get ())
+            y2 =float (self .entries ["Центр Y2"].get ())
+            z2 =float (self .entries ["Центр Z2"].get ())
+            r2 =float (self .entries ["Радиус R2"].get ())
+            cr2 =float (self .entries ["Цвет R2"].get ())
+            cg2 =float (self .entries ["Цвет G2"].get ())
+            cb2 =float (self .entries ["Цвет B2"].get ())
+
+            if r1 <=0 or r2 <=0 :
+                raise ValueError ("Радиусы сфер должны быть положительными")
+
+
+            for name ,val in [("R1",cr1 ),("G1",cg1 ),("B1",cb1 ),
+            ("R2",cr2 ),("G2",cg2 ),("B2",cb2 )]:
+                if val <0 or val >1 :
+                    raise ValueError (f"Цвет {name } должен быть в диапазоне [0, 1]")
+
+
+            z_viewer =float (self .entries ["Позиция наблюдателя Z"].get ())
+            if z_viewer >=0 :
+                raise ValueError ("Наблюдатель должен находиться перед экраном (Z < 0)")
+
+            k_a =float (self .entries ["Коэф. ambient"].get ())
+            k_d =float (self .entries ["Коэф. diffuse"].get ())
+            k_s =float (self .entries ["Коэф. specular"].get ())
+            shininess =float (self .entries ["Блеск"].get ())
+            I_amb =float (self .entries ["Фоновое освещение"].get ())
+
+            if k_a <0 or k_d <0 or k_s <0 or I_amb <0 :
+                raise ValueError ("Коэффициенты освещения должны быть неотрицательными")
+            if shininess <=0 :
+                raise ValueError ("Коэффициент блеска должен быть положительным")
+
+
+            screen =Screen (W_mm =W_mm ,H_mm =H_mm ,W_res =W_res ,H_res =H_res )
+            sphere1 =Sphere (cx =x1 ,cy =y1 ,cz =z1 ,radius =r1 ,color =(cr1 ,cg1 ,cb1 ))
+            sphere2 =Sphere (cx =x2 ,cy =y2 ,cz =z2 ,radius =r2 ,color =(cr2 ,cg2 ,cb2 ))
+            viewer =Viewer (z =z_viewer )
+            shading =ShadingParams (k_a =k_a ,k_d =k_d ,k_s =k_s ,
+            shininess =shininess ,I_ambient =I_amb )
+
+            return screen ,lights ,[sphere1 ,sphere2 ],viewer ,shading 
+
+        except ValueError as e :
+            messagebox .showerror ("Ошибка ввода",str (e ))
+            return None 
+
+    def _on_calculate (self ):
+
+        params =self ._read_parameters ()
+        if params is None :
+            return 
+
+        screen ,lights ,spheres ,viewer ,shading =params 
+
+        self .status_var .set ("Вычисление...")
+        self .update ()
+
+        try :
+
+            renderer =TwoSpheresRenderer (screen ,lights ,spheres ,viewer ,shading )
+            renderer .compute ()
+
+
+            renderer .save_image (self .output_path .get ())
+            renderer .show_image ()
+            renderer .show_scene_projections ()
+
+            self .status_var .set (f"Готово! Сохранено в {self .output_path .get ()}")
+
+        except Exception as e :
+            messagebox .showerror ("Ошибка расчета",str (e ))
+            self .status_var .set ("Ошибка при расчете")
+
+
+def main ():
+    app =TwoSpheresApp ()
+    app .mainloop ()
+
+
+if __name__ =="__main__":
+    main ()
